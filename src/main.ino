@@ -4,6 +4,8 @@
 // ESP32
 #include <esp_sleep.h>
 
+#include <ESP32Servo.h>
+
 // GxEPD2_MinimumExample.ino by Jean-Marc Zingg
 
 // purpose is e.g. to determine minimum code and ram use by this library
@@ -33,10 +35,41 @@
 // Medium
 #include <Fonts/FreeMono9pt7b.h>
 
+#include "ESPAsyncWebServer.h"
+
 const uint32_t SLEEP_DURATION = sleepDurationSeconds * 1000000; // µs
+
+HTTPClient http;
 
 // WiFi
 WiFiMulti wifiMulti;
+
+Servo servo;
+
+AsyncWebServer server(80);
+
+class CaptiveRequestHandler : public AsyncWebHandler
+{
+public:
+  CaptiveRequestHandler() {}
+  virtual ~CaptiveRequestHandler() {}
+
+  bool canHandle(AsyncWebServerRequest *request)
+  {
+    // request->addInterestingHeader("ANY");
+    return true;
+  }
+
+  void handleRequest(AsyncWebServerRequest *request)
+  {
+    AsyncResponseStream *response = request->beginResponseStream("application/json");
+    response->print("1");
+    request->send(response);
+    servo.write(targetOrientation);
+    delay(rotationDuration);
+    servo.write(defaultOrientation);
+  }
+};
 
 void setup()
 {
@@ -52,7 +85,11 @@ void setup()
 
   low_power();
 
-  esp_sleep_enable_wifi_wakeup();
+  // esp_sleep_enable_wifi_wakeup();
+
+  servo.attach(15);
+
+  servo.write(defaultOrientation);
 
   if (debugEnabled)
     Serial.println("Wakeup reason: " + String(wakeup_reason));
@@ -81,35 +118,59 @@ void setup()
     display.powerOff();
     break;
   }
+  if (wifiMulti.run() == WL_CONNECTED)
+  {
+    if (debugEnabled)
+      Serial.println("Connected to WiFi");
+    // Clear screen
+    pollServer();
+  }
+  server.addHandler(new CaptiveRequestHandler());
+  server.begin();
 }
 
 void loop()
 {
   if (debugEnabled)
     Serial.println("Refreshing...");
-  if ((wifiMulti.run() == WL_CONNECTED))
-  {
-    if (debugEnabled)
-      Serial.println("Connected to WiFi");
-    // Clear screen
-    refreshBattery();
-    if (debugEnabled)
-      Serial.println("Going to sleep...");
-    light_sleep();
-  }
-  else
-  {
-    delay(100);
-  }
+  sleep(sleepDurationSeconds);
+  pollServer();
 }
 
-void refreshBattery()
+void pollServer()
+{
+  int chargeLevel = refreshBattery();
+  String url = String(apiURL) + "/poll?battery=" + String(chargeLevel);
+  http.begin(url);
+  int httpCode = http.GET();
+  if (httpCode > 0)
+  {
+    if (httpCode == HTTP_CODE_OK)
+    {
+      String payload = http.getString();
+      /*DynamicJsonDocument doc(1024);
+      deserializeJson(doc, payload);
+      String test = doc["test"];*/
+    }
+    else if (debugEnabled)
+    {
+      Serial.println("Error on HTTP request: " + httpCode);
+    }
+  }
+  else if (debugEnabled)
+    Serial.println("Error on HTTP request: " + httpCode);
+
+  http.end();
+}
+
+int refreshBattery()
 {
   // Battery
   // Bottom right
   int chargeLevel = getChargeLevelFromConversionTable(2.08 * getRawVoltage());
   if (debugEnabled)
     Serial.println("Charge level: " + String(chargeLevel));
+  return chargeLevel;
 }
 
 double conversionTable[] = {3.200, 3.250, 3.300, 3.350, 3.400, 3.450, 3.500, 3.550, 3.600, 3.650, 3.700,
