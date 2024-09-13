@@ -48,6 +48,13 @@ Servo servo;
 
 AsyncWebServer server(80);
 
+void openDoor()
+{
+  servo.write(targetOrientation);
+  delay(rotationDuration);
+  servo.write(defaultOrientation);
+}
+
 class CaptiveRequestHandler : public AsyncWebHandler
 {
 public:
@@ -65,9 +72,7 @@ public:
     AsyncResponseStream *response = request->beginResponseStream("application/json");
     response->print("1");
     request->send(response);
-    servo.write(targetOrientation);
-    delay(rotationDuration);
-    servo.write(defaultOrientation);
+    openDoor();
   }
 };
 
@@ -131,10 +136,8 @@ void setup()
 
 void loop()
 {
-  if (debugEnabled)
-    Serial.println("Refreshing...");
-  sleep(sleepDurationSeconds);
   pollServer();
+  sleep(sleepDurationSeconds);
 }
 
 void pollServer()
@@ -148,9 +151,8 @@ void pollServer()
     if (httpCode == HTTP_CODE_OK)
     {
       String payload = http.getString();
-      /*DynamicJsonDocument doc(1024);
-      deserializeJson(doc, payload);
-      String test = doc["test"];*/
+      if (payload == "true")
+        openDoor();
     }
     else if (debugEnabled)
     {
