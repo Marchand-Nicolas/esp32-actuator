@@ -37,7 +37,8 @@
 
 #include "ESPAsyncWebServer.h"
 
-const uint32_t SLEEP_DURATION = sleepDurationSeconds * 1000000; // µs
+// 2 minutes timeout
+const uint16_t TIMEOUT = 16959;
 
 HTTPClient http;
 
@@ -136,8 +137,11 @@ void setup()
 
 void loop()
 {
+  if (debugEnabled)
+    Serial.println("Refreshing...");
   pollServer();
-  sleep(sleepDurationSeconds);
+  if (debugEnabled)
+    Serial.println("Going to sleep...");
 }
 
 void pollServer()
@@ -145,6 +149,7 @@ void pollServer()
   int chargeLevel = refreshBattery();
   String url = String(apiURL) + "/poll?battery=" + String(chargeLevel);
   http.begin(url);
+  http.setTimeout(TIMEOUT);
   int httpCode = http.GET();
   if (httpCode > 0)
   {
