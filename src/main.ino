@@ -42,8 +42,6 @@
 // 2 minutes timeout
 const uint16_t TIMEOUT = 16959;
 
-HTTPClient http;
-
 // WiFi
 WiFiMulti wifiMulti;
 
@@ -103,7 +101,10 @@ void setup()
   servo.write(defaultOrientation);
 
   if (debugEnabled)
-    Serial.println("Wakeup reason: " + String(wakeup_reason));
+  {
+    Serial.print("Wakeup reason: ");
+    Serial.println(wakeup_reason);
+  }
 
   // Wifi
   wifiMulti.addAP(wifiSSID, wifiPassword);
@@ -176,7 +177,9 @@ void loop()
 void pollServer()
 {
   int chargeLevel = refreshBattery();
-  String url = String(apiURL) + "/poll?battery=" + String(chargeLevel);
+  char url[256]; // Ensure the array is large enough
+  snprintf(url, sizeof(url), "%s/poll?battery=%d", apiURL, chargeLevel);
+  HTTPClient http;
   http.begin(url);
   http.setTimeout(TIMEOUT);
   int httpCode = http.GET();
@@ -186,15 +189,23 @@ void pollServer()
     {
       String payload = http.getString();
       if (payload == "true")
+      {
+        if (debugEnabled)
+          Serial.println("Opening door...");
         openDoor();
+      }
     }
     else if (debugEnabled)
     {
-      Serial.println("Error on HTTP request: " + httpCode);
+      Serial.print("Error on HTTP request: ");
+      Serial.println(httpCode);
     }
   }
   else if (debugEnabled)
-    Serial.println("Error on HTTP request: " + httpCode);
+  {
+    Serial.print("Error on HTTP request: ");
+    Serial.println(httpCode);
+  }
 
   http.end();
 }
@@ -205,7 +216,10 @@ int refreshBattery()
   // Bottom right
   int chargeLevel = getChargeLevelFromConversionTable(2.08 * getRawVoltage());
   if (debugEnabled)
-    Serial.println("Charge level: " + String(chargeLevel));
+  {
+    Serial.print("Charge level: ");
+    Serial.println(chargeLevel);
+  }
   return chargeLevel;
 }
 
@@ -222,24 +236,29 @@ double conversionTable[] = {3.200, 3.250, 3.300, 3.350, 3.400, 3.450, 3.500, 3.5
 
 int getChargeLevelFromConversionTable(double volts)
 {
-  int index = 50;
-  int previousIndex = 0;
-  int half = 0;
+  int low = 0;
+  int high = sizeof(conversionTable) / sizeof(conversionTable[0]) - 1;
+  int mid;
 
-  while (previousIndex != index)
+  while (low <= high)
   {
-    half = abs(index - previousIndex) / 2;
-    previousIndex = index;
-    if (conversionTable[index] == volts)
+    mid = (low + high) / 2;
+    if (conversionTable[mid] == volts)
     {
-      return index;
+      return mid;
     }
-    index = (volts >= conversionTable[index])
-                ? index + half
-                : index - half;
+    else if (conversionTable[mid] < volts)
+    {
+      low = mid + 1;
+    }
+    else
+    {
+      high = mid - 1;
+    }
   }
 
-  return index;
+  // If exact voltage not found, return the closest index
+  return mid;
 }
 
 double getRawVoltage()
