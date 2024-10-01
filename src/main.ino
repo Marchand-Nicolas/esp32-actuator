@@ -37,6 +37,8 @@
 
 #include "ESPAsyncWebServer.h"
 
+#include <esp_task_wdt.h>
+
 // 2 minutes timeout
 const uint16_t TIMEOUT = 16959;
 
@@ -79,13 +81,16 @@ public:
 
 void setup()
 {
+  // WDT Init
+  esp_task_wdt_init(WDT_TIMEOUT, true);
+  esp_task_wdt_add(NULL); // add current thread to WDT watch
+
   if (debugEnabled)
   {
     Serial.begin(115200);
     Serial.println("Starting...");
   }
 
-  // Screen
   esp_sleep_wakeup_cause_t wakeup_reason;
   wakeup_reason = esp_sleep_get_wakeup_cause();
 
@@ -137,11 +142,35 @@ void setup()
 
 void loop()
 {
-  if (debugEnabled)
-    Serial.println("Refreshing...");
+  if (WiFi.status() != WL_CONNECTED)
+  {
+    if (debugEnabled)
+      Serial.println("Wi-Fi disconnected. Attempting to reconnect...");
+    WiFi.disconnect();
+    WiFi.reconnect();
+    unsigned long startAttemptTime = millis();
+
+    // Keep trying to reconnect for 10 seconds
+    while (WiFi.status() != WL_CONNECTED && millis() - startAttemptTime < 10000)
+    {
+      delay(100);
+    }
+
+    if (WiFi.status() != WL_CONNECTED)
+    {
+      if (debugEnabled)
+        Serial.println("Failed to reconnect to Wi-Fi.");
+      // Optionally, reset the ESP32 if reconnection fails
+      ESP.restart();
+    }
+    else
+    {
+      if (debugEnabled)
+        Serial.println("Reconnected to Wi-Fi.");
+    }
+  }
+  esp_task_wdt_reset();
   pollServer();
-  if (debugEnabled)
-    Serial.println("Going to sleep...");
 }
 
 void pollServer()
