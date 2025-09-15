@@ -40,7 +40,7 @@
 #include <esp_task_wdt.h>
 
 // 2 minutes timeout
-const uint16_t TIMEOUT = 16959;
+const uint32_t TIMEOUT = 60000;
 
 // WiFi
 WiFiMulti wifiMulti;
@@ -178,10 +178,12 @@ void pollServer()
 {
   int chargeLevel = refreshBattery();
   char url[256]; // Ensure the array is large enough
+  WiFiClient client;
+  client.setTimeout(TIMEOUT); // Timeout socket
   snprintf(url, sizeof(url), "%s/poll?battery=%d", apiURL, chargeLevel);
   HTTPClient http;
-  http.begin(url);
   http.setTimeout(TIMEOUT);
+  http.begin(client, url);
   int httpCode = http.GET();
   if (httpCode > 0)
   {
