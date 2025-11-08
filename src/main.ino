@@ -38,6 +38,7 @@
 #include "ESPAsyncWebServer.h"
 
 #include <esp_task_wdt.h>
+#include <esp_wifi.h> // for WIFI_POWER_19_5dBm
 
 // 2 minutes timeout
 const uint32_t TIMEOUT = 60000;
@@ -48,6 +49,40 @@ WiFiMulti wifiMulti;
 Servo servo;
 
 AsyncWebServer server(80);
+
+// Wi-Fi reconnection backoff (non-blocking)
+static uint32_t wifiReconnectBackoffMs = 1000;          // start at 1s
+static const uint32_t wifiReconnectBackoffMaxMs = 6000; // cap at 6s
+static unsigned long lastReconnectAttemptMs = 0;
+
+// Optional Wi-Fi event logger and state reset
+static void onWiFiEvent(WiFiEvent_t event)
+{
+  if (debugEnabled)
+  {
+    Serial.print("WiFi event: ");
+    Serial.println(static_cast<int>(event));
+  }
+#if defined(ARDUINO_EVENT_WIFI_STA_GOT_IP)
+  if (event == ARDUINO_EVENT_WIFI_STA_GOT_IP)
+#elif defined(SYSTEM_EVENT_STA_GOT_IP)
+  if (event == SYSTEM_EVENT_STA_GOT_IP)
+#else
+  if (false) // loop() handles backoff reset when connected
+#endif
+  {
+    // Reset backoff on successful connection
+    wifiReconnectBackoffMs = 1000;
+    lastReconnectAttemptMs = 0;
+    if (debugEnabled)
+    {
+      Serial.print("IP: ");
+      Serial.println(WiFi.localIP());
+      Serial.print("RSSI: ");
+      Serial.println(WiFi.RSSI());
+    }
+  }
+}
 
 void openDoor()
 {
@@ -107,6 +142,12 @@ void setup()
   }
 
   // Wifi
+  WiFi.mode(WIFI_STA);
+  // Maximize link budget and stability
+  WiFi.setSleep(false);                // disable modem sleep for better sensitivity/stability
+  WiFi.setTxPower(WIFI_POWER_19_5dBm); // highest allowed TX power
+  WiFi.setAutoReconnect(true);
+  WiFi.onEvent(onWiFiEvent);
   wifiMulti.addAP(wifiSSID, wifiPassword);
 
   switch (wakeup_reason)
@@ -143,35 +184,41 @@ void setup()
 
 void loop()
 {
-  if (WiFi.status() != WL_CONNECTED)
-  {
-    if (debugEnabled)
-      Serial.println("Wi-Fi disconnected. Attempting to reconnect...");
-    WiFi.disconnect();
-    WiFi.reconnect();
-    unsigned long startAttemptTime = millis();
-
-    // Keep trying to reconnect for 10 seconds
-    while (WiFi.status() != WL_CONNECTED && millis() - startAttemptTime < 10000)
-    {
-      delay(100);
-    }
-
-    if (WiFi.status() != WL_CONNECTED)
-    {
-      if (debugEnabled)
-        Serial.println("Failed to reconnect to Wi-Fi.");
-      // Optionally, reset the ESP32 if reconnection fails
-      ESP.restart();
-    }
-    else
-    {
-      if (debugEnabled)
-        Serial.println("Reconnected to Wi-Fi.");
-    }
-  }
   esp_task_wdt_reset();
-  pollServer();
+  if (WiFi.status() == WL_CONNECTED)
+  {
+    // Connected: reset backoff and do work
+    wifiReconnectBackoffMs = 1000;
+    pollServer();
+  }
+  else
+  {
+    // Disconnected: non-blocking exponential backoff reconnect attempts
+    const unsigned long now = millis();
+    if (now - lastReconnectAttemptMs >= wifiReconnectBackoffMs)
+    {
+      if (debugEnabled)
+      {
+        Serial.print("Wi-Fi disconnected. Reconnecting... (backoff ");
+        Serial.print(wifiReconnectBackoffMs);
+        Serial.println(" ms)");
+      }
+      WiFi.disconnect();
+      WiFi.reconnect();
+      lastReconnectAttemptMs = now;
+      // Exponential backoff with cap
+      if (wifiReconnectBackoffMs < wifiReconnectBackoffMaxMs)
+      {
+        wifiReconnectBackoffMs = wifiReconnectBackoffMs * 2;
+        if (wifiReconnectBackoffMs > wifiReconnectBackoffMaxMs)
+        {
+          wifiReconnectBackoffMs = wifiReconnectBackoffMaxMs;
+        }
+      }
+    }
+    // Short delay to avoid tight spinning
+    delay(50);
+  }
 }
 
 void pollServer()
